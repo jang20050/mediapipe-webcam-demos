@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gesture Reactions</title>
+<style>
+  :root {
+    --bg: #0e0f13; --panel: #171920; --line: #2a2d38; --text: #eceef4;
+    --muted: #8b90a3; --accent: #4ade80; --bar: #2f3340; --warn: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Pretendard", "Malgun Gothic", system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 18px; letter-spacing: -0.2px; }
+  #status { margin-left: auto; font-size: 13px; color: var(--muted); }
+  #status.error { color: var(--warn); }
+  main {
+    display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px;
+    max-width: 1200px; margin: 0 auto; padding: 16px;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+  /* 카메라 화면 */
+  .stage {
+    position: relative; background: #000; border-radius: 14px; overflow: hidden;
+    aspect-ratio: 4 / 3;
+  }
+  #canvas { width: 100%; height: 100%; display: block; }
+  .placeholder {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; color: var(--muted);
+  }
+  .placeholder.hidden { display: none; }
+  button {
+    font: inherit; font-size: 16px; font-weight: 700; color: #0b0c10;
+    background: var(--accent); border: 0; border-radius: 999px; padding: 12px 28px; cursor: pointer;
+  }
+  button:disabled { background: var(--bar); color: var(--muted); cursor: default; }
+
+  /* 손 위에 뜨는 리액션 */
+  .reaction {
+    position: absolute; pointer-events: none; line-height: 1;
+    font-size: clamp(64px, 11vw, 140px);
+    transform: translate(-50%, -100%) scale(0.3); opacity: 0;
+    transition: transform 0.25s cubic-bezier(0.2, 1.6, 0.4, 1), opacity 0.2s,
+                left 0.08s linear, top 0.08s linear;
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.6));
+  }
+  .reaction.show { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+  .reaction img { width: clamp(140px, 22vw, 280px); display: block; }
+
+  /* 오른쪽 패널 */
+  aside {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; display: flex; flex-direction: column; gap: 18px; align-self: start;
+  }
+  .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .result { display: flex; align-items: center; gap: 12px; min-height: 64px; }
+  #resultName { font-size: 36px; font-weight: 800; }
+  #resultIcon { font-size: 44px; line-height: 1; }
+  #resultIcon img { height: 40px; display: block; }
+  .prob-row {
+    display: grid; grid-template-columns: 64px 1fr 40px; align-items: center;
+    gap: 8px; font-size: 13px; margin: 6px 0;
+  }
+  .prob-bar { height: 8px; background: var(--bar); border-radius: 4px; overflow: hidden; }
+  .prob-fill { height: 100%; width: 0; background: var(--accent); transition: width 0.1s; }
+  .prob-row.top .prob-name { font-weight: 700; }
+  .prob-val { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: flex; align-items: center; gap: 6px; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px 4px 6px;
+  }
+  .chip span:first-child { font-size: 20px; line-height: 1; }
+  .chip img { height: 16px; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>✋ Gesture Reactions</h1>
+  <div id="status">불러오는 중…</div>
+</header>
+
+<main>
+  <div class="stage" id="stage">
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div class="placeholder" id="placeholder">
+      <div>학습한 제스처를 인식해서 리액션을 띄웁니다</div>
+      <button id="startBtn" disabled>카메라 시작</button>
+    </div>
+  </div>
+
+  <aside>
+    <div>
+      <div class="label">인식 결과</div>
+      <div class="result"><div id="resultIcon"></div><div id="resultName">-</div></div>
+    </div>
+    <div>
+      <div class="label">제스처별 확률</div>
+      <div id="probs"></div>
+    </div>
+    <div>
+      <div class="label">최소 확률 <b id="thresholdValue">0.70</b></div>
+      <input type="range" id="threshold" min="0.3" max="0.95" step="0.05" value="0.7">
+    </div>
+    <div>
+      <div class="label">리액션</div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <p class="hint">모델을 다시 학습했다면 <code>python export_web_model.py</code> 후 GitHub에 push하면 이 페이지에 자동 반영됩니다.</p>
+  </aside>
+</main>
+
+<video id="video" playsinline muted hidden></video>
+
+<script type="module">
+import { FilesetResolver, HandLandmarker } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/vision_bundle.mjs";
+
+// ---------------------------------------------------------------- 설정
+// 제스처 이름 -> 리액션. emoji 또는 img 중 하나. 여기에 추가하면 다른 제스처도 리액션이 생김
+const REACTIONS = {
+  nike: { img: "assets/nike.svg" },
+  ok:   { emoji: "👌" },
+};
+const SMOOTHING = 0.5;           // 확률 이동평균 (클수록 반응 빠름, 작을수록 안정적)
+const FRAME_W = 640, FRAME_H = 480; // 학습 데이터와 같은 4:3 비율
+
+const HAND_CONNECTIONS = [
+  [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
+];
+
+const $ = (id) => document.getElementById(id);
+const canvas = $("canvas"), ctx = canvas.getContext("2d");
+const video = $("video"), stage = $("stage");
+let model, landmarker, lastVideoTime = -1;
+const smoothed = {};     // "Left"/"Right" -> 확률 (이동평균)
+const reactionEls = {};  // "Left"/"Right" -> 리액션 DOM
+
+function setStatus(text, error = false) {
+  $("status").textContent = text;
+  $("status").classList.toggle("error", error);
+}
+
+// ---------------------------------------------------------------- 분류 모델 (gesture_common.normalize + GestureMLP와 동일한 계산)
+function normalize(points, handedness) {
+  const [wx, wy, wz] = points[0];
+  const pts = points.map(([x, y, z]) => [x - wx, y - wy, z - wz]);
+  if (handedness === "Left") pts.forEach((p) => { p[0] *= -1; });
+  const scale = Math.max(...pts.map(([x, y]) => Math.hypot(x, y)));
+  return pts.flat().map((v) => (scale > 1e-6 ? v / scale : v));
+}
+
+function predict(x) {
+  let h = x;
+  model.layers.forEach((layer, li) => {
+    const last = li === model.layers.length - 1;
+    h = layer.b.map((b, o) => {
+      const row = layer.W[o];
+      let s = b;
+      for (let k = 0; k < h.length; k++) s += row[k] * h[k];
+      return last ? s : Math.max(0, s);
+    });
+  });
+  const m = Math.max(...h);
+  const e = h.map((v) => Math.exp(v - m));
+  const sum = e.reduce((a, b) => a + b, 0);
+  return e.map((v) => v / sum);
+}
+
+// 파이썬에서 계산한 결과와 브라우저 계산이 같은지 확인
+function selfTest() {
+  let maxDiff = 0;
+  for (const s of model.samples) {
+    const p = predict(normalize(s.points, s.handedness));
+    p.forEach((v, i) => { maxDiff = Math.max(maxDiff, Math.abs(v - s.probs[i])); });
+  }
+  return maxDiff;
+}
+
+// ---------------------------------------------------------------- UI
+function reactionHTML(r) {
+  return r.img ? `<img src="${r.img}" alt="">` : r.emoji;
+}
+
+function buildPanel() {
+  $("probs").innerHTML = model.labels.map((name, i) => `
+    <div class="prob-row" id="prob${i}">
+      <span class="prob-name">${name}</span>
+      <div class="prob-bar"><div class="prob-fill"></div></div>
+      <span class="prob-val">0.00</span>
+    </div>`).join("");
+  $("legend").innerHTML = Object.entries(REACTIONS)
+    .map(([name, r]) => `<div class="chip"><span>${reactionHTML(r)}</span><span>${name}</span></div>`)
+    .join("");
+}
+
+function updatePanel(probs, label) {
+  const top = probs ? probs.indexOf(Math.max(...probs)) : -1;
+  model.labels.forEach((_, i) => {
+    const row = $(`prob${i}`);
+    const p = probs ? probs[i] : 0;
+    row.querySelector(".prob-fill").style.width = `${p * 100}%`;
+    row.querySelector(".prob-val").textContent = p.toFixed(2);
+    row.classList.toggle("top", i === top);
+  });
+  $("resultName").textContent = probs ? (label ?? "?") : "-";
+  $("resultIcon").innerHTML = label && REACTIONS[label] ? reactionHTML(REACTIONS[label]) : "";
+}
+
+function updateReaction(key, label, x, y) {
+  let el = reactionEls[key];
+  if (!el) {
+    el = reactionEls[key] = document.createElement("div");
+    el.className = "reaction";
+    stage.appendChild(el);
+  }
+  const r = label && REACTIONS[label];
+  if (!r) {
+    el.classList.remove("show");
+    return;
+  }
+  if (el.dataset.label !== label) {
+    el.dataset.label = label;
+    el.innerHTML = reactionHTML(r);
+  }
+  el.style.left = `${x * 100}%`;
+  el.style.top = `${Math.max(y, 0.3) * 100}%`;
+  el.classList.add("show");
+}
+
+function drawHand(points, highlight) {
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = highlight ? "#4ade80" : "rgba(255,255,255,0.7)";
+  ctx.beginPath();
+  for (const [a, b] of HAND_CONNECTIONS) {
+    ctx.moveTo(points[a][0] * FRAME_W, points[a][1] * FRAME_H);
+    ctx.lineTo(points[b][0] * FRAME_W, points[b][1] * FRAME_H);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "#f43f5e";
+  for (const [x, y] of points) {
+    ctx.beginPath();
+    ctx.arc(x * FRAME_W, y * FRAME_H, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ---------------------------------------------------------------- 카메라 루프
+function drawMirroredFrame() {
+  // 영상 가운데를 4:3으로 잘라 좌우 반전 (파이썬 수집 때와 같은 조건)
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const target = FRAME_W / FRAME_H;
+  let sw = vw, sh = vh;
+  if (vw / vh > target) sw = vh * target; else sh = vw / target;
+  ctx.save();
+  ctx.translate(FRAME_W, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, FRAME_W, FRAME_H);
+  ctx.restore();
+}
+
+function loop() {
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    drawMirroredFrame();
+    const result = landmarker.detectForVideo(canvas, performance.now());
+    render(result);
+  }
+  requestAnimationFrame(loop);
+}
+
+function render(result) {
+  const threshold = parseFloat($("threshold").value);
+  const seen = new Set();
+  let panelDone = false;
+
+  result.landmarks.forEach((lms, i) => {
+    const handedness = result.handedness?.[i]?.[0]?.categoryName ?? "Right";
+    const key = seen.has(handedness) ? `${handedness}${i}` : handedness;
+    seen.add(key);
+
+    const points = lms.map((l) => [l.x, l.y, l.z]);
+    const probs = predict(normalize(points, handedness));
+    const prev = smoothed[key];
+    const s = smoothed[key] = prev
+      ? prev.map((v, j) => v * (1 - SMOOTHING) + probs[j] * SMOOTHING)
+      : probs;
+
+    const top = s.indexOf(Math.max(...s));
+    const label = s[top] >= threshold ? model.labels[top] : null;
+    drawHand(points, Boolean(label && REACTIONS[label]));
+
+    const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    updateReaction(key, label, cx, Math.min(...ys) - 0.02);
+
+    ctx.font = "bold 20px 'Malgun Gothic', sans-serif";
+    ctx.fillStyle = "#fff";
+    ctx.shadowColor = "#000"; ctx.shadowBlur = 4;
+    ctx.fillText(`${label ?? "?"} ${s[top].toFixed(2)}`,
+                 Math.min(...xs) * FRAME_W, Math.max(...ys) * FRAME_H + 26);
+    ctx.shadowBlur = 0;
+
+    if (!panelDone) { updatePanel(s, label); panelDone = true; }
+  });
+
+  for (const key of Object.keys(reactionEls)) {
+    if (!seen.has(key)) {
+      reactionEls[key].classList.remove("show");
+      delete smoothed[key];
+    }
+  }
+  if (!panelDone) updatePanel(null, null);
+}
+
+async function startCamera() {
+  $("startBtn").disabled = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    $("placeholder").classList.add("hidden");
+    setStatus("실행 중");
+    requestAnimationFrame(loop);
+  } catch (e) {
+    $("startBtn").disabled = false;
+    setStatus(`카메라를 열 수 없습니다: ${e.message}`, true);
+  }
+}
+
+// ---------------------------------------------------------------- 초기화
+async function init() {
+  const res = await fetch("model.json", { cache: "no-store" });
+  if (!res.ok) throw new Error("model.json이 없습니다. run_web.py로 실행하세요.");
+  model = await res.json();
+  buildPanel();
+
+  const diff = selfTest();
+  console.log(`[gesture] 모델 검증: 파이썬 대비 최대 오차 ${diff.toExponential(2)}`);
+
+  setStatus("손 인식 모델 불러오는 중…");
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm");
+  const options = (delegate) => ({
+    baseOptions: { modelAssetPath: "hand_landmarker.task", delegate },
+    runningMode: "VIDEO", numHands: 2,
+    minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+  });
+  let delegate = "GPU";
+  try {
+    landmarker = await HandLandmarker.createFromOptions(vision, options("GPU"));
+  } catch {
+    delegate = "CPU";
+    landmarker = await HandLandmarker.createFromOptions(vision, options("CPU"));
+  }
+
+  // 디버깅용: 콘솔에서 window.__gesture.render({landmarks, handedness})로 화면 확인 가능
+  window.__gesture = { labels: model.labels, selfTestDiff: diff, delegate, render, samples: model.samples };
+  setStatus(`준비 완료 · 제스처 ${model.labels.join(", ")}`, diff > 1e-3);
+  $("startBtn").disabled = false;
+}
+
+$("threshold").addEventListener("input", (e) => {
+  $("thresholdValue").textContent = parseFloat(e.target.value).toFixed(2);
+});
+$("startBtn").addEventListener("click", startCamera);
+init().catch((e) => setStatus(e.message, true));
+</script>
+</body>
+</html>

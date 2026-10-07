@@ -183,6 +183,45 @@ python face_landmarker_webcam.py
 - **Claude Code**가 다운로드한 모델로 웹캠 코드를 작성하고 검증, GitHub 업로드까지 처리한다.
 - MediaPipe Tasks는 *옵션 설정 → 모델 생성 → 프레임별 추론 → 결과 그리기*의 동일한 패턴이라, 다른 비전 태스크(포즈, 객체 검출 등)에도 그대로 응용할 수 있다.
 
+## 8. 커스텀 제스처 학습 + 웹 리액션
+
+### 🌐 웹에서 바로 실행
+
+**https://jang20050.github.io/mediapipe-webcam-demos/**
+
+설치 없이 브라우저에서 [카메라 시작] → `nike` 제스처면 로고, `ok` 제스처면 👌 이모지가 손 위에 뜬다.
+
+### 내 제스처 학습하기 (Gesture Studio)
+
+```bash
+pip install mediapipe opencv-python torch
+python gesture_studio.py
+```
+
+| 탭 | 하는 일 |
+|---|---|
+| 1. 수집 | 제스처 이름 추가 → 선택 → Space로 녹화 (3초 카운트다운, 목표 개수 도달 시 자동 정지) |
+| 2. 학습 | [학습 시작] → 손 21개 좌표로 PyTorch MLP 분류기 학습 → `gesture_custom_model.pt` |
+| 3. 추론 | 학습한 모델로 실시간 인식 + 제스처별 확률 |
+
+### 학습한 모델을 웹에 반영
+
+```bash
+python export_web_model.py   # gesture_custom_model.pt -> docs/model.json
+git add docs && git commit -m "Update model" && git push   # GitHub Pages 자동 배포
+```
+
+로컬에서만 확인하려면 `python run_web.py`.
+
+| 파일 | 역할 |
+|---|---|
+| `gesture_studio.py` | 수집 / 학습 / 추론 GUI |
+| `gesture_common.py`, `gesture_train.py` | 공통 전처리, 학습 코드 |
+| `export_web_model.py` | PyTorch 모델 → 웹용 JSON 변환 |
+| `docs/index.html` | 웹 버전 (MediaPipe JS로 손 인식 + JSON 가중치로 분류). GitHub Pages가 `docs/` 폴더를 그대로 배포 |
+
+리액션은 `docs/index.html`의 `REACTIONS`에서 추가/변경할 수 있다. (예: `rock: { emoji: "🤘" }`)
+
 ## 모델 출처
 
 [Google AI Edge – MediaPipe Solutions](https://developers.google.com/edge/mediapipe/solutions/vision) 공식 모델 (Apache 2.0)
